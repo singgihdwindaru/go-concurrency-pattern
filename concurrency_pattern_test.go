@@ -663,8 +663,8 @@ func TestCancelMultipleWorkers(t *testing.T) {
 
 	fmt.Println()
 	// checking goroutine leak
-	expectedTotalGoroutineEnd := 2
-	assert.Equal(t, expectedTotalGoroutineEnd, totalGoroutineStart, "goroutine leak detected")
+	actualGoroutineLeft := runtime.NumGoroutine()
+	assert.Equal(t, totalGoroutineStart, actualGoroutineLeft, "goroutine leak detected")
 }
 
 func TestNonBlocking(t *testing.T) {
