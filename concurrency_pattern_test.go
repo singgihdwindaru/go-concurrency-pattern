@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -20,11 +22,10 @@ type Item struct {
 }
 
 var items = map[string]Item{
-	"a": {"gopher"},
-	"b": {"rabbitB"},
-	"c": {"rabbitC"},
-	"d": {"rabbitD"},
-	"e": {"rabbitE"},
+	"a": {"valueA"},
+	"b": {"valueB"},
+	"c": {"valueC"},
+	"d": {"valueD"},
 }
 
 func doSlowThing() { time.Sleep(10 * time.Millisecond) }
@@ -473,4 +474,225 @@ func TestDeadlock(t *testing.T) {
 
 	fmt.Println("All goroutines finished")
 	// time.Sleep(time.Second)
+}
+
+func TestChannelFuncReturnError(t *testing.T) {
+	// go clean -testcache &&  go test -run=TestChannelFuncReturnError -v
+	fmt.Println("Total goroutine ", runtime.NumGoroutine())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan []string, 1)
+	go ChannelFuncReturnError(ctx, ch, 0)
+	go ChannelFuncReturnError(ctx, ch, 1)
+	go ChannelFuncReturnError(ctx, ch, 2)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	fmt.Println(<-ch)
+	fmt.Println(<-ch)
+	fmt.Println(<-ch)
+	fmt.Println("Total goroutine ", runtime.NumGoroutine())
+}
+
+func ChannelFuncReturnError(ctx context.Context, param chan<- []string, id int) error {
+	var paymentMethodTransaction []string
+
+	getData := func(ctx context.Context) ([]string, error) {
+		data := []string{"data1", "data2", "data3"}
+		return data, nil
+	}
+	paymentMethod, err := getData(ctx)
+	if err != nil {
+		return err
+	}
+	if id == 1 {
+		time.Sleep(100 * time.Millisecond)
+	}
+	paymentMethodTransaction = append(paymentMethodTransaction, paymentMethod[id])
+
+	select {
+	case param <- paymentMethodTransaction:
+		// return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return nil
+}
+
+func TestSelectCase(t *testing.T) {
+	// go test -run=TestSelectCase -v
+	fmt.Println("Total goroutine ", runtime.NumGoroutine())
+
+	start := time.Now()
+	userIDs := []string{"a", "b", "c"}
+
+	userChan := make(chan *Item)
+	errorChan := make(chan error)
+
+	ctx := context.Background()
+	wg := &sync.WaitGroup{}
+
+	for _, userID := range userIDs {
+		wg.Add(1)
+		go fetchUser(ctx, userID, userChan, errorChan, wg)
+	}
+
+	for range userIDs {
+		select {
+		case user := <-userChan:
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if user.kind == "gopher" {
+					time.Sleep(500 * time.Millisecond)
+				}
+				if user.kind == "rabbitB" {
+					time.Sleep(300 * time.Millisecond)
+				}
+				if user.kind == "rabbitC" {
+					time.Sleep(400 * time.Millisecond)
+				}
+				// processUser(*user)
+			}()
+		case err := <-errorChan:
+			fmt.Println("Error occurred:", err)
+		}
+	}
+	wg.Wait()
+	fmt.Println(time.Since(start))
+	fmt.Println("Total goroutine ", runtime.NumGoroutine())
+
+}
+
+func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorChan chan error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	// if userID == "a" {
+	// 	time.Sleep(1500 * time.Millisecond)
+	// }
+	// if userID == "b" {
+	// 	time.Sleep(1500 * time.Millisecond)
+	// }
+	// if userID == "c" {
+	// 	time.Sleep(1500 * time.Millisecond)
+	// }
+	// if userID == "d" {
+	// 	time.Sleep(1600 * time.Millisecond)
+	// }
+	log.Printf("%v starting fetch userID\n", userID)
+
+	log.Printf("%v searching userID\n", userID)
+	item, ok := items[userID]
+	if !ok {
+		errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli())
+		// userChan <- &Item{}
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		log.Printf("%s fetchUser got cancel %v\n", userID, time.Now().UnixMilli())
+		close(userChan)
+	case userChan <- &item:
+		log.Printf("%v Finish userID %v\n", &item, time.Now().UnixMilli())
+	}
+
+}
+
+func TestCancelMultipleWorkers(t *testing.T) {
+	// go clean -testcache && go test -run=TestCancelMultipleWorkers -v
+	totalGoroutineStart := runtime.NumGoroutine()
+	log.Printf("There are %d goroutines starting\n\n", totalGoroutineStart)
+
+	data1 := make(chan *Item, 1)
+	data2 := make(chan *Item, 1)
+	data3 := make(chan *Item, 1)
+	data4 := make(chan *Item, 1)
+	chErr := make(chan error)
+
+	parentCtx := context.Background()
+	childCtx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(4)
+
+	go fetchUser(childCtx, "dd", data1, chErr, wg)
+	go fetchUser(childCtx, "aa", data2, chErr, wg)
+	go fetchUser(childCtx, "b", data3, chErr, wg)
+	go fetchUser(childCtx, "c", data4, chErr, wg)
+
+	go func() {
+		wg.Wait()
+		close(chErr)
+		close(data1)
+		close(data2)
+		close(data3)
+		close(data4)
+	}()
+
+	var done []bool
+	var isError bool
+
+	for len(done) < 4 && isError == false {
+		select {
+		case d1 := <-data1:
+			log.Println("the value ", *d1)
+			done = append(done, true)
+		case d2 := <-data2:
+			log.Println("the value ", *d2)
+			done = append(done, true)
+		case d3 := <-data3:
+			log.Println("the value ", *d3)
+			done = append(done, true)
+		case d4 := <-data4:
+			log.Println("the value ", *d4)
+			done = append(done, true)
+		case err := <-chErr:
+			cancel()
+			isError = true
+			log.Printf("error occured : %v", err)
+			return
+		}
+	}
+
+	log.Println("waiting ...")
+	wg.Wait()
+
+	fmt.Println()
+	// checking goroutine leak
+	expectedTotalGoroutineEnd := 2
+	assert.Equal(t, expectedTotalGoroutineEnd, totalGoroutineStart, "goroutine leak detected")
+}
+
+func TestNonBlocking(t *testing.T) {
+	// go test -run=TestNonBlocking -v
+
+	messages := make(chan string)
+	signals := make(chan bool)
+
+	select {
+	case msg := <-messages:
+		fmt.Println("received message", msg)
+	default:
+		fmt.Println("no message received")
+	}
+	msg := "hi"
+
+	select {
+	case messages <- msg:
+		fmt.Println("sent message", msg)
+	default:
+		fmt.Println("no message sent")
+	}
+	select {
+	case msg := <-messages:
+		fmt.Println("received message", msg)
+	case sig := <-signals:
+		fmt.Println("received signal", sig)
+	default:
+		fmt.Println("no activity")
+	}
 }
