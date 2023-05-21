@@ -443,6 +443,7 @@ func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorC
 	select {
 	case <-ctx.Done():
 		log.Printf("%s fetchUser got cancel %v\n", userID, time.Now().UnixMilli())
+		// errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli())
 		return
 	case userChan <- &item:
 	}
@@ -467,8 +468,8 @@ func TestCancelMultipleWorkers(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(4)
 	go fetchUser(childCtx, "dd", data1, chErr, &wg)
-	go fetchUser(childCtx, "aa", data2, chErr, &wg)
-	go fetchUser(childCtx, "bb", data3, chErr, &wg)
+	go fetchUser(childCtx, "a", data2, chErr, &wg)
+	go fetchUser(childCtx, "b", data3, chErr, &wg)
 	go fetchUser(childCtx, "cc", data4, chErr, &wg)
 
 	var signals []bool
@@ -496,6 +497,7 @@ func TestCancelMultipleWorkers(t *testing.T) {
 			}
 			signals = append(signals, true)
 		case err = <-chErr:
+			// signals = append(signals, true)
 			log.Printf("error occured : %v", err)
 			cancel()
 		}
@@ -507,11 +509,11 @@ func TestCancelMultipleWorkers(t *testing.T) {
 	}
 	wg.Wait()
 
-	close(chErr)
-	close(data1)
-	close(data2)
-	close(data3)
-	close(data4)
+	// close(chErr)
+	// close(data1)
+	// close(data2)
+	// close(data3)
+	// close(data4)
 
 	// checking goroutine leak
 	actualGoroutineLeft := runtime.NumGoroutine()
