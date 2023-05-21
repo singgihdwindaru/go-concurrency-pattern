@@ -694,7 +694,7 @@ func TestNonBlockingChannelOperations(t *testing.T) {
 	   For this case,there are two ways to success the send operation for unbuffered channel :
 	   1. Use separate goroutine for send operation and receiver in main goroutine
 	      go func(){
-	       // line 700 - 705
+	       // the second block select case
 	     }()
 	     <- messages // receive
 
