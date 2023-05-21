@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -411,8 +412,15 @@ func TestSelectCase(t *testing.T) {
 }
 
 func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorChan chan<- error, wg *sync.WaitGroup) {
+	log.Printf("%v starting fetch userID\n", userID)
 	defer wg.Done()
 
+	select {
+	case <-ctx.Done():
+		log.Printf("%s fetchUser got cancel %v\n", userID, time.Now().UnixMilli())
+		return
+	default:
+	}
 	// if userID == "a" {
 	// 	time.Sleep(1500 * time.Millisecond)
 	// }
@@ -425,25 +433,18 @@ func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorC
 	// if userID == "d" {
 	// 	time.Sleep(1600 * time.Millisecond)
 	// }
-	log.Printf("%v starting fetch userID\n", userID)
 
 	log.Printf("%v searching userID\n", userID)
 	item, ok := items[userID]
 	if !ok {
-		select {
-		case errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli()):
-			return
-		default:
-			//
-		}
+		errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli())
+		return
 	}
-
 	select {
 	case <-ctx.Done():
 		log.Printf("%s fetchUser got cancel %v\n", userID, time.Now().UnixMilli())
-		close(userChan)
+		return
 	case userChan <- &item:
-		log.Printf("%v Finish userID %v\n", &item, time.Now().UnixMilli())
 	}
 
 }
@@ -465,59 +466,57 @@ func TestCancelMultipleWorkers(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(4)
-
 	go fetchUser(childCtx, "dd", data1, chErr, &wg)
 	go fetchUser(childCtx, "aa", data2, chErr, &wg)
-	go fetchUser(childCtx, "b", data3, chErr, &wg)
+	go fetchUser(childCtx, "bb", data3, chErr, &wg)
 	go fetchUser(childCtx, "cc", data4, chErr, &wg)
 
-	// chDone := make(chan bool, 1)
-	go func(newWg *sync.WaitGroup) {
-		newWg.Wait()
-		// chErr <- errors.New("some error")
-		// close(chErr)
-		close(data1)
-		close(data2)
-		close(data3)
-		close(data4)
-	}(&wg)
-
-	var done []bool
-	var isError bool
-
-	fn := func() {
-		for len(done) < 4 && isError == false {
-			select {
-			case d1 := <-data1:
-				log.Println("the value ", *d1)
-				done = append(done, true)
-			case d2 := <-data2:
-				log.Println("the value ", *d2)
-				done = append(done, true)
-			case d3 := <-data3:
-				log.Println("the value ", *d3)
-				done = append(done, true)
-			case d4 := <-data4:
-				log.Println("the value ", *d4)
-				done = append(done, true)
-			case err := <-chErr:
-				cancel()
-				close(chErr)
-				isError = true
-				log.Printf("error occured : %v", err)
-				return
+	var signals []bool
+	var err error
+	for {
+		select {
+		case d1, ok := <-data1:
+			if ok {
+				log.Printf("Received result: %v\n", d1)
 			}
+			signals = append(signals, true)
+		case d2, ok := <-data2:
+			if ok {
+				log.Printf("Received result: %v\n", d2)
+			}
+			signals = append(signals, true)
+		case d3, ok := <-data3:
+			if ok {
+				log.Printf("Received result: %v\n", d3)
+			}
+			signals = append(signals, true)
+		case d4, ok := <-data4:
+			if ok {
+				log.Printf("Received result: %v\n", d4)
+			}
+			signals = append(signals, true)
+		case err = <-chErr:
+			log.Printf("error occured : %v", err)
+			cancel()
+		}
+
+		// Exit the loop when channels are closed
+		if err != nil || len(signals) > 3 {
+			break
 		}
 	}
-	fn()
 	wg.Wait()
-	// <-chErr
-	// close(chErr)
-	fmt.Println()
-	// time.Sleep(3 * time.Second)
+
+	close(chErr)
+	close(data1)
+	close(data2)
+	close(data3)
+	close(data4)
+
 	// checking goroutine leak
 	actualGoroutineLeft := runtime.NumGoroutine()
-	assert.Equal(t, totalGoroutineStart, actualGoroutineLeft, "goroutine leak detected")
+	assert.Equal(t, totalGoroutineStart, actualGoroutineLeft, "goroutine leak detected : ", totalGoroutineStart)
+
 }
 
 func TestNonBlockingChannelOperations(t *testing.T) {
