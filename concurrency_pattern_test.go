@@ -127,6 +127,7 @@ func FuturePatternFetch(name string) <-chan Item {
 
 	return c
 }
+
 func FuturePatternFetchV2(name string, c chan Item) {
 	// defer close(c)
 	item, ok := items[name]
@@ -137,48 +138,7 @@ func FuturePatternFetchV2(name string, c chan Item) {
 	}
 	c <- item
 }
-func TestSingleElementBufferedChannel2(t *testing.T) {
-	/*
-		go test -run=TestSingleElementBufferedChannel2 -v
-		NOTE : Notice the 10ms difference of timer result from the tests
-		1. If we return without waiting for the futures to complete, how long will they continue using resources?
-		2. What happens in case of cancellation or error? if so, what happens if we cancel it and then try to read from the channel?
-		Will we receive a zero-value, some other sentinel value, or block?
 
-	*/
-	fmt.Println("Remaining goroutines:", runtime.NumGoroutine())
-
-	tests := []struct {
-		name string
-		mock func()
-	}{
-		{
-			name: "Do this V2",
-			mock: func() {
-				start := time.Now()
-				items := make(chan Item)
-
-				/* Do this. The caller must set up concurrent work
-				before retrieving results */
-				go FuturePatternFetchV2("a", items)
-				go FuturePatternFetchV2("b", items)
-				consume(<-items, <-items)
-				close(items)
-				fmt.Println(time.Since(start))
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			test.mock()
-		})
-	}
-	fmt.Println("Remaining goroutines:", runtime.NumGoroutine()) //-1 for the function
-	// fmt.Println("Thread : ", runtime.GOMAXPROCS(-1))               //-1 for the function
-	// fmt.Println("CPU :", runtime.NumCPU())
-
-}
 func TestSingleElementBufferedChannel(t *testing.T) {
 	/*
 		go test -run=TestSingleElementBufferedChannel -v
@@ -268,22 +228,6 @@ func TestQueue(t *testing.T) {
 	}
 }
 
-func TestProducerWithoutConsumer(t *testing.T) {
-	/*
-		go test -run=TestProducerWithoutConsumer -v
-	*/
-	c := make(chan int)
-
-	go func() {
-		defer close(c)
-		c <- 8
-	}()
-	// time.Sleep(1 * time.Second)
-	// <-c
-	fmt.Println("processeing ...... ")
-	fmt.Println("Done ")
-}
-
 func printResult(done chan string) {
 	fmt.Println("2")
 	done <- "3"
@@ -307,30 +251,6 @@ func TestConc(t *testing.T) {
 	fmt.Println(<-done)
 }
 
-func TestChannel(t *testing.T) {
-	// go clean -testcache && go test ./src/order/usecase -run=TestChannel -v
-	// go test -run=TestChannel -v
-	start := time.Now()
-	errChan1 := make(chan error, 1)
-	errChan2 := make(chan error, 1)
-	go func() {
-		errChan1 <- errors.New("error chan 1")
-		time.Sleep(10 * time.Millisecond)
-		// close(errChan1)
-	}()
-	go func() {
-		errChan2 <- errors.New("error chan 2")
-		time.Sleep(10 * time.Millisecond)
-		// close(errChan2)
-	}()
-	err1 := <-errChan1
-	err2 := <-errChan2
-	fmt.Println(err1)
-	fmt.Println(err2)
-	elapsed := time.Since(start)
-	fmt.Println(elapsed)
-}
-
 func squares(c chan int) {
 	// time.Sleep(1000 * time.Millisecond)
 	for i := 0; i < 4; i++ {
@@ -351,82 +271,6 @@ func TestSquare(t *testing.T) {
 
 	time.Sleep(time.Second)
 	fmt.Println("Total goroutine ", runtime.NumGoroutine())
-}
-
-func TestBuff(t *testing.T) {
-	fmt.Println("Total goroutine ", runtime.NumGoroutine())
-	// ctx := context.Background().Done()
-	// go clean -testcache &&  go test -run=TestBuff -v
-	// g1
-	ch := make(chan int, 1)
-	// defer close(ch)
-	go func() {
-		// g2
-		heavyProccess := func() { time.Sleep(2000 * time.Millisecond) }
-		heavyProccess()
-		fmt.Println("hello goroutine number 2, ", <-ch)
-		// close(ch)
-		// fmt.Println("hello goroutine number 2, ? ")
-		// fmt.Println("hello goroutine number 2, ? ")
-		// ch <- 2
-		// ch <- 4
-		// ch <- 1
-		// ch <- 3
-		// close(ch)
-	}()
-	time.Sleep(1000 * time.Millisecond)
-	fmt.Println("hello goroutine number 1")
-	var err error
-	// err = errors.New("some error")
-	if err != nil { // wait a second for GC release goroutine
-		fmt.Println(err)
-
-		time.Sleep(500 * time.Millisecond)
-		fmt.Println("Total goroutine ", runtime.NumGoroutine())
-		return
-	}
-	ch <- 2
-	// fmt.Println(<-ch)
-	// fmt.Println(<-ch)
-	// fmt.Println(<-ch)
-	fmt.Println("finish goroutine number 1")
-	// fmt.Println(<-ch)
-
-	time.Sleep(100 * time.Millisecond) // wait a second for GC release goroutine
-	fmt.Println("Total goroutine ", runtime.NumGoroutine())
-}
-
-func TestBussff2(t *testing.T) {
-	fmt.Println("Total goroutine ", runtime.NumGoroutine())
-
-	// go clean -testcache &&  go test -run=TestBuff -v
-	// g1
-	ch := make(chan int, 1)
-	go func() {
-		// g2
-		heavyProccess := func() { time.Sleep(1000 * time.Millisecond) }
-		heavyProccess()
-		fmt.Println("hello goroutine number 2")
-		ch <- 2
-		ch <- 4
-		ch <- 1
-		ch <- 3
-		close(ch)
-	}()
-
-	time.Sleep(2000 * time.Millisecond)
-	fmt.Println("hello goroutine number 1")
-	// g2
-	fmt.Println(<-ch)
-	fmt.Println(<-ch)
-	fmt.Println(<-ch)
-	fmt.Println(<-ch)
-	fmt.Println("finish goroutine number 1")
-	// fmt.Println(<-ch)
-
-	time.Sleep(1 * time.Millisecond) // wait a second for GC release goroutine
-	fmt.Println("Total goroutine ", runtime.NumGoroutine())
-
 }
 
 func processFile(filename string, ch chan<- string) error {
