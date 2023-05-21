@@ -500,7 +500,7 @@ func TestCancelMultipleWorkers(t *testing.T) {
 			cancel()
 		}
 
-		// Exit the loop when channels are closed
+		// Exit the loop
 		if err != nil || len(signals) > 3 {
 			break
 		}
