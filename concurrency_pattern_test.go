@@ -566,7 +566,7 @@ func TestSelectCase(t *testing.T) {
 
 }
 
-func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorChan chan error, wg *sync.WaitGroup) {
+func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// if userID == "a" {
@@ -586,9 +586,12 @@ func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorC
 	log.Printf("%v searching userID\n", userID)
 	item, ok := items[userID]
 	if !ok {
-		errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli())
-		// userChan <- &Item{}
-		return
+		select {
+		case errorChan <- fmt.Errorf("%s not found for key %v\n", userID, time.Now().UnixMilli()):
+			return
+		default:
+			//
+		}
 	}
 
 	select {
@@ -610,65 +613,72 @@ func TestCancelMultipleWorkers(t *testing.T) {
 	data2 := make(chan *Item, 1)
 	data3 := make(chan *Item, 1)
 	data4 := make(chan *Item, 1)
-	chErr := make(chan error)
+	chErr := make(chan error, 4)
 
 	parentCtx := context.Background()
 	childCtx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	wg := &sync.WaitGroup{}
+	var wg sync.WaitGroup
 	wg.Add(4)
 
-	go fetchUser(childCtx, "dd", data1, chErr, wg)
-	go fetchUser(childCtx, "aa", data2, chErr, wg)
-	go fetchUser(childCtx, "b", data3, chErr, wg)
-	go fetchUser(childCtx, "cc", data4, chErr, wg)
+	go fetchUser(childCtx, "dd", data1, chErr, &wg)
+	go fetchUser(childCtx, "aa", data2, chErr, &wg)
+	go fetchUser(childCtx, "b", data3, chErr, &wg)
+	go fetchUser(childCtx, "cc", data4, chErr, &wg)
 
-	go func() {
-		wg.Wait()
-		close(chErr)
+	// chDone := make(chan bool, 1)
+	go func(newWg *sync.WaitGroup) {
+		newWg.Wait()
+		// chErr <- errors.New("some error")
+		// close(chErr)
 		close(data1)
 		close(data2)
 		close(data3)
 		close(data4)
-	}()
+	}(&wg)
 
 	var done []bool
 	var isError bool
 
-	for len(done) < 4 && isError == false {
-		select {
-		case d1 := <-data1:
-			log.Println("the value ", *d1)
-			done = append(done, true)
-		case d2 := <-data2:
-			log.Println("the value ", *d2)
-			done = append(done, true)
-		case d3 := <-data3:
-			log.Println("the value ", *d3)
-			done = append(done, true)
-		case d4 := <-data4:
-			log.Println("the value ", *d4)
-			done = append(done, true)
-		case err := <-chErr:
-			cancel()
-			isError = true
-			log.Printf("error occured : %v", err)
-			return
+	fn := func() {
+		for len(done) < 4 && isError == false {
+			select {
+			case d1 := <-data1:
+				log.Println("the value ", *d1)
+				done = append(done, true)
+			case d2 := <-data2:
+				log.Println("the value ", *d2)
+				done = append(done, true)
+			case d3 := <-data3:
+				log.Println("the value ", *d3)
+				done = append(done, true)
+			case d4 := <-data4:
+				log.Println("the value ", *d4)
+				done = append(done, true)
+			case err := <-chErr:
+				cancel()
+				close(chErr)
+				isError = true
+				log.Printf("error occured : %v", err)
+				return
+			}
 		}
 	}
-
-	log.Println("waiting ...")
-
+	fn()
+	wg.Wait()
+	// <-chErr
+	// close(chErr)
 	fmt.Println()
+	// time.Sleep(3 * time.Second)
 	// checking goroutine leak
 	actualGoroutineLeft := runtime.NumGoroutine()
 	assert.Equal(t, totalGoroutineStart, actualGoroutineLeft, "goroutine leak detected")
 }
 
-func TestNonBlocking(t *testing.T) {
-	// go test -run=TestNonBlocking -v
-
+func TestNonBlockingChannelOperations(t *testing.T) {
+	// go test -run=TestNonBlockingChannelOperations -v
+	// https://gobyexample.com/non-blocking-channel-operations
 	messages := make(chan string)
 	signals := make(chan bool)
 
@@ -679,13 +689,25 @@ func TestNonBlocking(t *testing.T) {
 		fmt.Println("no message received")
 	}
 	msg := "hi"
+	/* the messages channel is unbuffered and there is no receiver,
+	   the output will be "no message sent" because the send operation couldn't be performed immediately.
+	   For this case,there are two ways to success the send operation for unbuffered channel :
+	   1. Use separate goroutine for send operation and receiver in main goroutine
+	      go func(){
+	       // line 700 - 705
+	     }()
+	     <- messages // receive
 
+	   2. use buffered channel
+	   messages := make(chan string,1)
+	*/
 	select {
 	case messages <- msg:
 		fmt.Println("sent message", msg)
 	default:
 		fmt.Println("no message sent")
 	}
+
 	select {
 	case msg := <-messages:
 		fmt.Println("received message", msg)
