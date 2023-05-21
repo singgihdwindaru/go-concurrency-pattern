@@ -622,7 +622,7 @@ func TestCancelMultipleWorkers(t *testing.T) {
 	go fetchUser(childCtx, "dd", data1, chErr, wg)
 	go fetchUser(childCtx, "aa", data2, chErr, wg)
 	go fetchUser(childCtx, "b", data3, chErr, wg)
-	go fetchUser(childCtx, "c", data4, chErr, wg)
+	go fetchUser(childCtx, "cc", data4, chErr, wg)
 
 	go func() {
 		wg.Wait()
@@ -659,7 +659,6 @@ func TestCancelMultipleWorkers(t *testing.T) {
 	}
 
 	log.Println("waiting ...")
-	wg.Wait()
 
 	fmt.Println()
 	// checking goroutine leak
