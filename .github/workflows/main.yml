@@ -1,12 +1,19 @@
 name: Combine
 
-on :
- push:
+on:
+  push:
+    branches:
+      - main
   pull_request:
-      types: [opened, synchronize, reopened]
+    types:
+      - opened
+      - synchronize
+      - reopened
+
 jobs:
   my_job:
     runs-on: ubuntu-18.04
+
     steps:
       - name: Step 1
         id: job1
