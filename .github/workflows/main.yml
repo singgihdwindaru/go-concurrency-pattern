@@ -1,3 +1,9 @@
+name: Combine
+
+on :
+ push:
+  pull_request:
+      types: [opened, synchronize, reopened]
 jobs:
   my_job:
     runs-on: self-hosted
