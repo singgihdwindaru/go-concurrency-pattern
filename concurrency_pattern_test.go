@@ -5,13 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/pubsub"
 	"github.com/stretchr/testify/assert"
 
 	"golang.org/x/sync/errgroup"
@@ -326,6 +330,7 @@ func TestChannelFuncReturnError(t *testing.T) {
 	fmt.Println("Total goroutine ", runtime.NumGoroutine())
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	ch := make(chan []string, 1)
 	go ChannelFuncReturnError(ctx, ch, 0)
 	go ChannelFuncReturnError(ctx, ch, 1)
@@ -434,6 +439,10 @@ func fetchUser(ctx context.Context, userID string, userChan chan<- *Item, errorC
 	// 	time.Sleep(1600 * time.Millisecond)
 	// }
 
+	if userID == "aa" {
+		userChan <- nil
+		return
+	}
 	log.Printf("%v searching userID\n", userID)
 	item, ok := items[userID]
 	if !ok {
@@ -467,10 +476,10 @@ func TestCancelMultipleWorkers(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(4)
-	go fetchUser(childCtx, "dd", data1, chErr, &wg)
-	go fetchUser(childCtx, "a", data2, chErr, &wg)
+	go fetchUser(childCtx, "d", data1, chErr, &wg)
+	go fetchUser(childCtx, "aa", data2, chErr, &wg)
 	go fetchUser(childCtx, "b", data3, chErr, &wg)
-	go fetchUser(childCtx, "cc", data4, chErr, &wg)
+	go fetchUser(childCtx, "c", data4, chErr, &wg)
 
 	var signals []bool
 	var err error
@@ -521,6 +530,43 @@ func TestCancelMultipleWorkers(t *testing.T) {
 
 }
 
+func TestFindDuplicate(t *testing.T) {
+	// go test -run=TestFindDuplicate -v
+
+	numRay := []int{0, 4, 3, 2, 7, 8, 2, 3, 1}
+
+	arr_size := len(numRay)
+	for i := 0; i < arr_size; i++ {
+		x := numRay[i] % arr_size
+		numRay[x] = numRay[x] + arr_size
+	}
+	fmt.Print("The repeating elements are : ")
+	for i := 0; i < arr_size; i++ {
+		if numRay[i] >= arr_size*2 {
+			fmt.Print(i, " ")
+		}
+	}
+
+	// nums := []int{3, 1, 5, 4, 1}
+	// tortoise := nums[0]
+	// hare := nums[0]
+	// for {
+	// 	tortoise = nums[tortoise]
+	// 	hare = nums[nums[hare]]
+	// 	if tortoise == hare {
+	// 		break
+	// 	}
+	// }
+
+	// ptr1 := nums[0]
+	// ptr2 := tortoise
+	// for ptr1 != ptr2 {
+	// 	ptr1 = nums[ptr1]
+	// 	ptr2 = nums[ptr2]
+	// }
+	// fmt.Println("the duplicate number is ", ptr1)
+}
+
 func TestNonBlockingChannelOperations(t *testing.T) {
 	// go test -run=TestNonBlockingChannelOperations -v
 	// https://gobyexample.com/non-blocking-channel-operations
@@ -560,5 +606,144 @@ func TestNonBlockingChannelOperations(t *testing.T) {
 		fmt.Println("received signal", sig)
 	default:
 		fmt.Println("no activity")
+	}
+}
+
+var pubsubClient *pubsub.Client
+
+func initPubsub() (err error) {
+	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "keyPubSub.json")
+	pubsubClient, err = pubsub.NewClient(context.Background(), "propane-galaxy-168212")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type subscriberCfg struct {
+	subscriberId string
+	concurrency  int
+	handler      func(ctx context.Context, msg *pubsub.Message)
+}
+
+func NewSubscribe(ctx context.Context, client *pubsub.Client) error {
+	// ctx := context.Background()
+	subs := []subscriberCfg{
+		{
+			subscriberId: "article-comments-2",
+			concurrency:  1,
+			handler:      SendFinishedTransactionEmail,
+		},
+	}
+	for _, s := range subs {
+		go subscribe(ctx, client, s)
+	}
+	return nil
+}
+
+func SendFinishedTransactionEmail(ctx context.Context, msg *pubsub.Message) {
+	data := string(msg.Data)
+	if data == "hello" {
+		msg.Nack()
+	}
+	fmt.Println("Message from pubsub : ")
+	msg.Ack()
+}
+
+var subscribe = func(ctx context.Context, client *pubsub.Client, cfg subscriberCfg) {
+	sub := client.Subscription(cfg.subscriberId)
+	sub.ReceiveSettings.MaxOutstandingMessages = cfg.concurrency
+	err := sub.Receive(ctx, cfg.handler)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func TestSubscribeBackground(t *testing.T) {
+	ctx := context.Background()
+	initPubsub()
+	NewSubscribe(ctx, pubsubClient)
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	<-sigs
+	log.Println("subscribe done")
+}
+
+func IsContextCancel(ctx context.Context) {
+	// time.Sleep(10 * time.Millisecond)
+
+	select {
+	case <-ctx.Done():
+		log.Println(ctx.Err().Error())
+	default:
+		log.Println("ctx not cancel")
+	}
+}
+
+func TestIsContextCancel(t *testing.T) {
+	// go test -run=TestIsContextCancel -v
+
+	ctx := context.Background()
+	go IsContextCancel(ctx)
+	time.Sleep(10 * time.Millisecond)
+	log.Println("finish")
+}
+
+func TestChanErr(t *testing.T) {
+	// go clean -testcache && go test -run=TestChanErr -v
+
+	// bufferSize := 1
+	errorChannel := make(chan error) //, bufferSize)
+	done := make(chan bool, 1)
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go produceErrors(errorChannel, done, &wg)
+	go consumeErrors(errorChannel, done, &wg)
+	wg.Wait()
+}
+
+func produceErrors(ch chan<- error, done chan<- bool, wgOri *sync.WaitGroup) {
+	defer wgOri.Done()
+	wg := sync.WaitGroup{}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(chx chan<- error, it int) {
+			defer wg.Done()
+			if it == 3 {
+				time.Sleep(3 * time.Second)
+				chx <- fmt.Errorf("Error %d", it)
+			} else if it == 4 {
+				chx <- fmt.Errorf("Error %d", it)
+			} else {
+				chx <- nil
+			}
+		}(ch, i)
+	}
+	wg.Wait()
+	done <- true
+}
+
+func consumeErrors(ch <-chan error, done <-chan bool, wgOri *sync.WaitGroup) {
+	defer wgOri.Done()
+	wg := sync.WaitGroup{}
+	for {
+		select {
+		case err := <-ch:
+			// time.Sleep(200 * time.Millisecond)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err != nil {
+					time.Sleep(3 * time.Second)
+				}
+				fmt.Println("Received error:", err)
+			}()
+		case <-done:
+			wg.Wait()
+			fmt.Println("Process completed.")
+			return
+		}
 	}
 }
