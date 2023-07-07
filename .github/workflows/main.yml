@@ -1,0 +1,21 @@
+name: Combine
+
+on :
+ push:
+  pull_request:
+      types: [opened, synchronize, reopened]
+jobs:
+  my_job:
+    runs-on: self-hosted
+    steps:
+      - name: Step 1
+        id: job1
+        run: |
+          echo "Running Step 1"
+          # Add your Step 1 logic here
+
+      - name: Step 2
+        if: ${{ job.status == 'success' }}
+        run: |
+          echo "Running Step 2"
+          # Add your Step 2 logic here
