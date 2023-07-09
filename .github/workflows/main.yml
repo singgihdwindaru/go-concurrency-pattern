@@ -1,21 +1,33 @@
 name: Combine
 
-on :
- push:
+on:
+  push:
+    branches:
+      - main
   pull_request:
-      types: [opened, synchronize, reopened]
+    types:
+      - opened
+      - synchronize
+      - reopened
+
 jobs:
   my_job:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+
     steps:
       - name: Step 1
         id: job1
         run: |
           echo "Running Step 1"
+          echo "Step ID: ${{ steps.job1.id }}" >> ${{ github.workspace }}/job_report.txt
           # Add your Step 1 logic here
 
       - name: Step 2
         if: ${{ job.status == 'success' }}
         run: |
           echo "Running Step 2"
+          echo "Step ID: ${{ steps.job2.id }}" >> ${{ github.workspace }}/job_report.txt
           # Add your Step 2 logic here
+
+      - name: Display Job Report
+        run: cat ${{ github.workspace }}/job_report.txt
